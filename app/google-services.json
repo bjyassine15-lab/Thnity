@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "979090641504",
+    "project_id": "thnity-e2d02",
+    "storage_bucket": "thnity-e2d02.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:979090641504:android:55ecf78d155c179c126905",
+        "android_client_info": {
+          "package_name": "com.example.transitapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBbPra59C9MwGgoZs7mzx3TLOqVG7ftt7k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
