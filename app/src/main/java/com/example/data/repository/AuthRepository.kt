@@ -81,11 +81,14 @@ class AuthRepository(
                     isAdmin = cached.isAdmin,
                     statusMessage = cached.statusMessage
                 )
-                if (profile.isVip || profile.isAdmin) {
-                    _authState.value = AuthState.Authenticated(profile, isVip = profile.isVip)
-                } else {
-                    _authState.value = AuthState.PendingVipApproval(profile)
-                }
+                // Local cache is only an offline hint. It must never grant
+                // VIP/admin access before Firestore confirms the profile.
+                val safeCachedProfile = profile.copy(
+                    isVip = false,
+                    isAdmin = false,
+                    statusMessage = "جارٍ التحقق من صلاحيات الحساب"
+                )
+                _authState.value = AuthState.PendingVipApproval(safeCachedProfile)
             }
         }
 
@@ -112,11 +115,13 @@ class AuthRepository(
                                 isAdmin = cached.isAdmin,
                                 statusMessage = cached.statusMessage
                             )
-                            if (profile.isVip || profile.isAdmin) {
-                                _authState.value = AuthState.Authenticated(profile, isVip = profile.isVip)
-                            } else {
-                                _authState.value = AuthState.PendingVipApproval(profile)
-                            }
+                            // Cached privileges are never authoritative.
+                            val safeCachedProfile = profile.copy(
+                                isVip = false,
+                                isAdmin = false,
+                                statusMessage = "تعذر التحقق من صلاحيات الحساب"
+                            )
+                            _authState.value = AuthState.PendingVipApproval(safeCachedProfile)
                         } else {
                             _authState.value = AuthState.Error(error.localizedMessage ?: "حدث خطأ في الاتصال بالسيرفر")
                         }
