@@ -1,0 +1,6 @@
+{
+  "name": "Transit Client",
+  "description": "Secure transit network client with custom compact JSON parsing, SQLCipher AES-256 encrypted Room database, and VIP approval state management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
