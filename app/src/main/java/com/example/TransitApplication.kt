@@ -7,6 +7,10 @@ class TransitApplication : Application() {
     override fun onCreate() {
         super.onCreate()
 
+        // sqlcipher-android bundles the native core but requires explicit loading
+        // before Room/SQLCipher opens the encrypted database.
+        System.loadLibrary("sqlcipher")
+
         // FirebaseInitProvider normally performs this automatically, but the
         // explicit guard keeps startup deterministic when using Firebase APIs
         // from repositories created during the first Activity launch.

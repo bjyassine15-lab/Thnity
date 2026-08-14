@@ -86,14 +86,9 @@ class TransitViewModel(
                 _statusMessage.value = "تعذر تحميل البيانات المحلية: ${error.localizedMessage ?: "خطأ في قاعدة البيانات المشفرة"}"
             }
 
-            // Cloud sync is optional for displaying the verified local data,
-            // but a denied/failed sync must never be presented as success.
-            val cloudResult = runCatching { transitRepository.syncWithCloudFirestore() }
-                .getOrElse { Result.failure(it) }
-            if (cloudResult.isFailure) {
-                _statusIsError.value = true
-                _statusMessage.value = "فشلت المزامنة السحابية: ${cloudResult.exceptionOrNull()?.localizedMessage ?: "صلاحيات Firestore غير كافية"}"
-            }
+            // Cloud sync is intentionally user-triggered after authentication.
+            // Starting it here races Firebase Auth restoration and can produce a
+            // misleading PERMISSION_DENIED while request.auth is still null.
         }
     }
 
