@@ -48,6 +48,9 @@ class TransitViewModel(
     private val _statusMessage = MutableStateFlow<String?>(null)
     val statusMessage: StateFlow<String?> = _statusMessage.asStateFlow()
 
+    private val _statusIsError = MutableStateFlow(false)
+    val statusIsError: StateFlow<Boolean> = _statusIsError.asStateFlow()
+
     private val _isSyncing = MutableStateFlow(false)
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
 
@@ -68,21 +71,28 @@ class TransitViewModel(
 
     init {
         viewModelScope.launch {
-            try {
+            runCatching {
                 transitRepository.seedInitialDataIfEmpty()
-            } catch (error: Throwable) {
-                // Startup data is optional; a local database/provider failure
-                // must not crash the authentication screen.
-                _statusMessage.value = "تعذر تحميل البيانات المحلية"
+                // A partial/empty database is never considered a successful
+                // startup. Rebuild the complete sample atomically if needed.
+                if (!transitRepository.isLocalDatasetReady()) {
+                    transitRepository.restoreDefaultData()
+                }
+                check(transitRepository.isLocalDatasetReady()) {
+                    "Local dataset is still empty after restore"
+                }
+            }.onFailure { error ->
+                _statusIsError.value = true
+                _statusMessage.value = "تعذر تحميل البيانات المحلية: ${error.localizedMessage ?: "خطأ في قاعدة البيانات المشفرة"}"
             }
 
-            // Cloud sync is also optional during startup. The repository
-            // returns a Result for expected network failures, while this guard
-            // protects against provider/runtime failures as well.
-            try {
-                transitRepository.syncWithCloudFirestore()
-            } catch (error: Throwable) {
-                _statusMessage.value = "تعذر مزامنة البيانات السحابية"
+            // Cloud sync is optional for displaying the verified local data,
+            // but a denied/failed sync must never be presented as success.
+            val cloudResult = runCatching { transitRepository.syncWithCloudFirestore() }
+                .getOrElse { Result.failure(it) }
+            if (cloudResult.isFailure) {
+                _statusIsError.value = true
+                _statusMessage.value = "فشلت المزامنة السحابية: ${cloudResult.exceptionOrNull()?.localizedMessage ?: "صلاحيات Firestore غير كافية"}"
             }
         }
     }
@@ -108,14 +118,23 @@ class TransitViewModel(
     fun syncFromCloud() {
         viewModelScope.launch {
             _isSyncing.value = true
-            val result = transitRepository.syncWithCloudFirestore()
-            if (result.isSuccess) {
-                val found = result.getOrDefault(false)
-                _statusMessage.value = if (found) "تمت المزامنة مع قاعدة البيانات السحابية بنجاح!" else "البيانات المحلية محدثة بالفعل"
-            } else {
-                _statusMessage.value = "فشلت المزامنة: ${result.exceptionOrNull()?.localizedMessage}"
+            try {
+                val result = transitRepository.syncWithCloudFirestore()
+                if (result.isSuccess) {
+                    val found = result.getOrDefault(false)
+                    _statusIsError.value = false
+                    _statusMessage.value = if (found) {
+                        "تمت المزامنة مع قاعدة البيانات السحابية بنجاح!"
+                    } else {
+                        "لم يتم العثور على مجموعة بيانات سحابية؛ ما زالت البيانات المحلية مستخدمة"
+                    }
+                } else {
+                    _statusIsError.value = true
+                    _statusMessage.value = "فشلت المزامنة: ${result.exceptionOrNull()?.localizedMessage ?: "صلاحيات Firestore غير كافية"}"
+                }
+            } finally {
+                _isSyncing.value = false
             }
-            _isSyncing.value = false
         }
     }
 
@@ -123,27 +142,42 @@ class TransitViewModel(
         viewModelScope.launch {
             _isSyncing.value = true
             val result = transitRepository.importJson(jsonString)
-            if (result.isSuccess) {
-                val dataset = result.getOrNull()
-                _statusMessage.value = "تم استيراد ${dataset?.pois?.size ?: 0} نقطة و ${dataset?.streets?.size ?: 0} مسار وتشفيرها محلياً بـ SQLCipher!"
-            } else {
-                _statusMessage.value = "فشل تحليل الـ JSON: ${result.exceptionOrNull()?.localizedMessage}"
+            try {
+                if (result.isSuccess) {
+                    val dataset = result.getOrNull()
+                    _statusIsError.value = false
+                    _statusMessage.value = "تم استيراد ${dataset?.pois?.size ?: 0} نقطة و ${dataset?.streets?.size ?: 0} مسار وتشفيرها محلياً بـ SQLCipher!"
+                } else {
+                    _statusIsError.value = true
+                    _statusMessage.value = "فشل تحليل الـ JSON: ${result.exceptionOrNull()?.localizedMessage ?: "بيانات غير صالحة"}"
+                }
+            } finally {
+                _isSyncing.value = false
             }
-            _isSyncing.value = false
         }
     }
 
     fun clearStatusMessage() {
         _statusMessage.value = null
+        _statusIsError.value = false
     }
 
     fun resetToDefaultData() {
         viewModelScope.launch {
             _isSyncing.value = true
-            transitRepository.clearDatabase()
-            transitRepository.seedInitialDataIfEmpty()
-            _statusMessage.value = "تمت استعادة البيانات النموذجية لقاعدة البيانات المشفرة"
-            _isSyncing.value = false
+            try {
+                transitRepository.restoreDefaultData()
+                check(transitRepository.isLocalDatasetReady()) {
+                    "Local dataset is still empty after restore"
+                }
+                _statusIsError.value = false
+                _statusMessage.value = "تمت استعادة البيانات النموذجية لقاعدة البيانات المشفرة"
+            } catch (error: Throwable) {
+                _statusIsError.value = true
+                _statusMessage.value = "فشلت استعادة البيانات المحلية: ${error.localizedMessage ?: "خطأ في قاعدة البيانات المشفرة"}"
+            } finally {
+                _isSyncing.value = false
+            }
         }
     }
 }

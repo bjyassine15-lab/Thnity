@@ -1,11 +1,13 @@
 package com.example.data.repository
 
+import androidx.room.withTransaction
 import com.example.data.local.PoiDao
 import com.example.data.local.PoiEntity
 import com.example.data.local.StreetDao
 import com.example.data.local.StreetEntity
 import com.example.data.local.StreetJunctionDao
 import com.example.data.local.StreetJunctionEntity
+import com.example.data.local.TransitEncryptedDatabase
 import com.example.data.model.Poi
 import com.example.data.model.Street
 import com.example.data.model.StreetJunction
@@ -23,6 +25,7 @@ class TransitRepository(
     private val poiDao: PoiDao,
     private val streetDao: StreetDao,
     private val junctionDao: StreetJunctionDao,
+    private val database: TransitEncryptedDatabase,
     private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
 ) {
 
@@ -41,6 +44,12 @@ class TransitRepository(
     val poiCount: Flow<Int> = poiDao.getPoiCountFlow().catch { emit(0) }
     val streetCount: Flow<Int> = streetDao.getStreetCountFlow().catch { emit(0) }
     val junctionCount: Flow<Int> = junctionDao.getJunctionCountFlow().catch { emit(0) }
+
+    suspend fun isLocalDatasetReady(): Boolean = withContext(Dispatchers.IO) {
+        poiDao.getPoiCount() > 0 &&
+            streetDao.getStreetCount() > 0 &&
+            junctionDao.getJunctionCount() > 0
+    }
 
     suspend fun importDataset(dataset: TransitDataset) = withContext(Dispatchers.IO) {
         val poiEntities = dataset.pois.map { poi ->
@@ -72,13 +81,17 @@ class TransitRepository(
             )
         }
 
-        poiDao.clearAll()
-        streetDao.clearAll()
-        junctionDao.clearAll()
-
-        poiDao.insertPois(poiEntities)
-        streetDao.insertStreets(streetEntities)
-        junctionDao.insertJunctions(junctionEntities)
+        // Replace the complete dataset atomically. If SQLCipher/Room fails at
+        // any point, the previous valid dataset remains intact instead of
+        // leaving the application with zero or partially inserted rows.
+        database.withTransaction {
+            poiDao.clearAll()
+            streetDao.clearAll()
+            junctionDao.clearAll()
+            poiDao.insertPois(poiEntities)
+            streetDao.insertStreets(streetEntities)
+            junctionDao.insertJunctions(junctionEntities)
+        }
     }
 
     suspend fun importJson(jsonString: String): Result<TransitDataset> = withContext(Dispatchers.IO) {
@@ -91,11 +104,14 @@ class TransitRepository(
         }
     }
 
-    suspend fun seedInitialDataIfEmpty() = withContext(Dispatchers.IO) {
+    suspend fun seedInitialDataIfEmpty(force: Boolean = false) = withContext(Dispatchers.IO) {
         // Do not rewrite the encrypted database on every launch. Besides being
         // expensive, an unnecessary open/write cycle can abort application
         // startup on devices where the SQLCipher provider is still warming up.
-        if (poiDao.getPoiCount() > 0 || streetDao.getStreetCount() > 0 || junctionDao.getJunctionCount() > 0) {
+        val hasCompleteLocalDataset = poiDao.getPoiCount() > 0 &&
+            streetDao.getStreetCount() > 0 &&
+            junctionDao.getJunctionCount() > 0
+        if (!force && hasCompleteLocalDataset) {
             return@withContext
         }
 
@@ -203,25 +219,33 @@ class TransitRepository(
         importDataset(parsed)
     }
 
+    suspend fun restoreDefaultData() = seedInitialDataIfEmpty(force = true)
+
     suspend fun clearDatabase() = withContext(Dispatchers.IO) {
-        poiDao.clearAll()
-        streetDao.clearAll()
-        junctionDao.clearAll()
+        database.withTransaction {
+            poiDao.clearAll()
+            streetDao.clearAll()
+            junctionDao.clearAll()
+        }
     }
 
     // Sync dataset from Cloud Firestore if available
     suspend fun syncWithCloudFirestore(): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
             val doc = firestore.collection("transit_dataset").document("latest").get().await()
-            if (doc.exists()) {
-                val jsonString = doc.getString("jsonString")
-                if (!jsonString.isNullOrBlank()) {
-                    val dataset = TransitGsonParser.parseDataset(jsonString)
-                    importDataset(dataset)
-                    return@withContext Result.success(true)
-                }
+            if (!doc.exists()) {
+                return@withContext Result.failure(
+                    IllegalStateException("لم توجد مجموعة بيانات سحابية في transit_dataset/latest")
+                )
             }
-            Result.success(false)
+            val jsonString = doc.getString("jsonString")
+            require(!jsonString.isNullOrBlank()) {
+                "مجموعة البيانات السحابية فارغة"
+            }
+            val dataset = TransitGsonParser.parseDataset(jsonString)
+            validateDataset(dataset)
+            importDataset(dataset)
+            Result.success(true)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -230,12 +254,14 @@ class TransitRepository(
     // Push new dataset to Cloud Firestore (Admin capability)
     suspend fun uploadDatasetToCloud(jsonString: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            // Validate JSON first
+            // Validate JSON completely before touching local or cloud data.
             val dataset = TransitGsonParser.parseDataset(jsonString)
-            // Save to local encrypted DB
-            importDataset(dataset)
+            validateDataset(dataset)
 
-            // Save to Firestore
+            // Save to Firestore first. A permission/network failure must not
+            // leave the device showing a locally changed dataset as if upload
+            // had succeeded.
+
             val cloudPayload = hashMapOf(
                 "version" to dataset.version,
                 "jsonString" to jsonString,
@@ -245,10 +271,19 @@ class TransitRepository(
                 "updatedAt" to System.currentTimeMillis()
             )
             firestore.collection("transit_dataset").document("latest").set(cloudPayload).await()
+            // Only after Firestore confirms the write, replace local data in one
+            // SQLCipher transaction. Any local failure is returned explicitly.
+            importDataset(dataset)
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    private fun validateDataset(dataset: TransitDataset) {
+        require(dataset.pois.isNotEmpty()) { "مجموعة البيانات لا تحتوي على محطات" }
+        require(dataset.streets.isNotEmpty()) { "مجموعة البيانات لا تحتوي على مسارات" }
+        require(dataset.streetJunctions.isNotEmpty()) { "مجموعة البيانات لا تحتوي على تقاطعات" }
     }
 
     private fun PoiEntity.toDomain() = Poi(

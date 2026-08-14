@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Stars
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -101,6 +102,7 @@ fun MainTransitScreen(
     val searchQuery by transitViewModel.searchQuery.collectAsStateWithLifecycle()
     val isSyncing by transitViewModel.isSyncing.collectAsStateWithLifecycle()
     val statusMessage by transitViewModel.statusMessage.collectAsStateWithLifecycle()
+    val statusIsError by transitViewModel.statusIsError.collectAsStateWithLifecycle()
 
     val poiCount by transitViewModel.poiCount.collectAsStateWithLifecycle()
     val streetCount by transitViewModel.streetCount.collectAsStateWithLifecycle()
@@ -337,14 +339,20 @@ fun MainTransitScreen(
                 statusMessage?.let { msg ->
                     Card(
                         shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (statusIsError) RoseError.copy(alpha = 0.18f) else Color(0xFF1E293B)
+                        ),
                         elevation = CardDefaults.cardElevation(8.dp)
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.CloudSync, contentDescription = null, tint = EmeraldSuccess)
+                            Icon(
+                                imageVector = if (statusIsError) Icons.Default.Warning else Icons.Default.CloudSync,
+                                contentDescription = null,
+                                tint = if (statusIsError) RoseError else EmeraldSuccess
+                            )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(text = msg, color = Color.White, style = MaterialTheme.typography.bodySmall)
                             Spacer(modifier = Modifier.width(8.dp))

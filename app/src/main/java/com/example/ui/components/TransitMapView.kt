@@ -44,14 +44,19 @@ fun TransitMapView(
     var mapError by remember { mutableStateOf<String?>(null) }
     val mapResult = remember(context) {
         runCatching {
-            // Configure Osmdroid User Agent and persistent preferences.
-            Configuration.getInstance().userAgentValue = context.packageName
+            // Load persistent cache settings first, then identify the app with
+            // a stable, contactable User-Agent required by OSM tile servers.
             Configuration.getInstance().load(
                 context,
                 context.getSharedPreferences("osmdroid", Context.MODE_PRIVATE)
             )
+            Configuration.getInstance().userAgentValue =
+                "Thnity/1.0 (+https://github.com/bjyassine15-lab/Thnity)"
             MapView(context).apply {
+                // MAPNIK resolves to https://tile.openstreetmap.org/ in the
+                // bundled osmdroid version and keeps normal disk caching.
                 setTileSource(TileSourceFactory.MAPNIK)
+                setUseDataConnection(true)
                 setMultiTouchControls(true)
                 controller.setZoom(13.5)
                 controller.setCenter(GeoPoint(36.8064948, 10.1815316))
@@ -155,6 +160,21 @@ fun TransitMapView(
                     color = MaterialTheme.colorScheme.onErrorContainer
                 )
             }
+        }
+
+        // Required visible OpenStreetMap attribution.
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(12.dp)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.9f))
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+        ) {
+            Text(
+                text = "© OpenStreetMap contributors",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface
+            )
         }
 
         // Overlay Map badge

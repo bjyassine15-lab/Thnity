@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.LockOpen
@@ -102,6 +103,7 @@ fun AdminDashboardScreen(
     val searchQuery by adminViewModel.searchQuery.collectAsStateWithLifecycle()
     val selectedFilter by adminViewModel.selectedFilter.collectAsStateWithLifecycle()
     val actionMessage by adminViewModel.adminActionMessage.collectAsStateWithLifecycle()
+    val actionIsError by adminViewModel.adminActionIsError.collectAsStateWithLifecycle()
     val isUploadingDataset by adminViewModel.isUploadingDataset.collectAsStateWithLifecycle()
 
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -191,7 +193,7 @@ fun AdminDashboardScreen(
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 8.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFF065F46))
+                            .background(if (actionIsError) RoseError.copy(alpha = 0.22f) else Color(0xFF065F46))
                             .padding(horizontal = 16.dp, vertical = 10.dp)
                     ) {
                         Row(
@@ -201,7 +203,7 @@ fun AdminDashboardScreen(
                         ) {
                             Text(
                                 text = msg,
-                                color = Color(0xFFA7F3D0),
+                                color = if (actionIsError) Color(0xFFFFCDD2) else Color(0xFFA7F3D0),
                                 style = MaterialTheme.typography.bodySmall,
                                 modifier = Modifier.weight(1f)
                             )

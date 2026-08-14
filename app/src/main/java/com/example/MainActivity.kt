@@ -55,11 +55,12 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val transitRepository = remember {
-                    TransitRepository(
-                        poiDao = database.poiDao(),
-                        streetDao = database.streetDao(),
-                        junctionDao = database.streetJunctionDao()
-                    )
+                        TransitRepository(
+                            poiDao = database.poiDao(),
+                            streetDao = database.streetDao(),
+                            junctionDao = database.streetJunctionDao(),
+                            database = database
+                        )
                 }
 
                 val authViewModel = remember { AuthViewModel(authRepository) }

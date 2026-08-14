@@ -36,6 +36,9 @@ class AdminViewModel(
     private val _adminActionMessage = MutableStateFlow<String?>(null)
     val adminActionMessage: StateFlow<String?> = _adminActionMessage.asStateFlow()
 
+    private val _adminActionIsError = MutableStateFlow(false)
+    val adminActionIsError: StateFlow<Boolean> = _adminActionIsError.asStateFlow()
+
     private val _isUploadingDataset = MutableStateFlow(false)
     val isUploadingDataset: StateFlow<Boolean> = _isUploadingDataset.asStateFlow()
 
@@ -75,6 +78,7 @@ class AdminViewModel(
                 isVip = enableVip,
                 customMessage = if (enableVip) "تم تفعيل حسابك من قبل الأدمن بنجاح" else "الحساب قيد المراجعة"
             )
+            _adminActionIsError.value = result.isFailure
             if (result.isSuccess) {
                 _adminActionMessage.value = if (enableVip) {
                     "تم تفعيل صلاحية VIP للمستخدم (${user.email}) فورياً!"
@@ -91,6 +95,7 @@ class AdminViewModel(
         viewModelScope.launch {
             _isUploadingDataset.value = true
             val result = transitRepository.uploadDatasetToCloud(jsonString)
+            _adminActionIsError.value = result.isFailure
             if (result.isSuccess) {
                 _adminActionMessage.value = "تم رفع قاعدة بيانات النقل الجديدة إلى السحابة بنجاح ومزامنتها لجميع مستخدمي الـ VIP!"
             } else {
@@ -102,5 +107,6 @@ class AdminViewModel(
 
     fun clearActionMessage() {
         _adminActionMessage.value = null
+        _adminActionIsError.value = false
     }
 }
