@@ -105,7 +105,9 @@ fun MainTransitScreen(
     val poiCount by transitViewModel.poiCount.collectAsStateWithLifecycle()
     val streetCount by transitViewModel.streetCount.collectAsStateWithLifecycle()
 
-    var selectedNavIndex by remember { mutableIntStateOf(0) }
+    // Start on the local directory instead of constructing osmdroid during the
+    // first authenticated composition. The map remains available from the Map tab.
+    var selectedNavIndex by remember { mutableIntStateOf(1) }
     var showPoiDetailsSheet by remember { mutableStateOf(false) }
 
     Scaffold(

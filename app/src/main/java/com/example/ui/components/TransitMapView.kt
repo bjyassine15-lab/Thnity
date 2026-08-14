@@ -10,10 +10,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -36,27 +41,52 @@ fun TransitMapView(
 ) {
     val context = LocalContext.current
 
-    // Configure Osmdroid User Agent
-    remember {
-        Configuration.getInstance().userAgentValue = context.packageName
-        Configuration.getInstance().load(context, context.getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
+    var mapError by remember { mutableStateOf<String?>(null) }
+    val mapResult = remember(context) {
+        runCatching {
+            // Configure Osmdroid User Agent and persistent preferences.
+            Configuration.getInstance().userAgentValue = context.packageName
+            Configuration.getInstance().load(
+                context,
+                context.getSharedPreferences("osmdroid", Context.MODE_PRIVATE)
+            )
+            MapView(context).apply {
+                setTileSource(TileSourceFactory.MAPNIK)
+                setMultiTouchControls(true)
+                controller.setZoom(13.5)
+                controller.setCenter(GeoPoint(36.8064948, 10.1815316))
+            }
+        }
     }
+    val mapView = mapResult.getOrNull()
 
-    val mapView = remember {
-        MapView(context).apply {
-            setTileSource(TileSourceFactory.MAPNIK)
-            setMultiTouchControls(true)
-            controller.setZoom(13.5)
-            // Center around Tunis (36.8065, 10.1815)
-            controller.setCenter(GeoPoint(36.8064948, 10.1815316))
+    LaunchedEffect(mapResult) {
+        mapResult.exceptionOrNull()?.let {
+            mapError = "تعذر تشغيل الخريطة حالياً"
         }
     }
 
-    DisposableEffect(Unit) {
-        mapView.onResume()
+    if (mapView == null) {
+        Box(
+            modifier = modifier.background(Color(0xFF0F172A)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = mapError ?: "الخريطة غير متاحة حالياً، ويمكنك استخدام بقية أقسام التطبيق.",
+                color = Color.White
+            )
+        }
+        return
+    }
+
+    DisposableEffect(mapView) {
+        runCatching { mapView.onResume() }
+            .onFailure { mapError = "تعذر تشغيل الخريطة حالياً" }
         onDispose {
-            mapView.onPause()
-            mapView.onDetach()
+            runCatching {
+                mapView.onPause()
+                mapView.onDetach()
+            }
         }
     }
 
@@ -65,53 +95,67 @@ fun TransitMapView(
             modifier = Modifier.fillMaxSize(),
             factory = { mapView },
             update = { map ->
-                map.overlays.clear()
+                runCatching {
+                    map.overlays.clear()
 
-                // Draw Streets
-                streets.forEach { street ->
-                    if (street.coordinates.isNotEmpty()) {
-                        val polyline = Polyline(map).apply {
-                            title = street.name
-                            val geoPoints = street.coordinates.map { pt ->
-                                val lon = pt.getOrNull(0) ?: 0.0
-                                val lat = pt.getOrNull(1) ?: 0.0
-                                GeoPoint(lat, lon)
+                    streets.forEach { street ->
+                        if (street.coordinates.isNotEmpty()) {
+                            val polyline = Polyline(map).apply {
+                                title = street.name
+                                val geoPoints = street.coordinates.map { pt ->
+                                    val lon = pt.getOrNull(0) ?: 0.0
+                                    val lat = pt.getOrNull(1) ?: 0.0
+                                    GeoPoint(lat, lon)
+                                }
+                                setPoints(geoPoints)
+                                outlinePaint.color = android.graphics.Color.parseColor("#4338CA")
+                                outlinePaint.strokeWidth = 10f
                             }
-                            setPoints(geoPoints)
-                            outlinePaint.color = android.graphics.Color.parseColor("#4338CA")
-                            outlinePaint.strokeWidth = 10f
+                            map.overlays.add(polyline)
                         }
-                        map.overlays.add(polyline)
                     }
-                }
 
-                // Draw POI Markers
-                pois.forEach { poi ->
-                    val lat = poi.latitude
-                    val lon = poi.longitude
-                    if (lat != 0.0 && lon != 0.0) {
-                        val marker = Marker(map).apply {
-                            position = GeoPoint(lat, lon)
-                            title = poi.name
-                            snippet = poi.address ?: poi.type ?: poi.getDisplayName("en")
-                            setOnMarkerClickListener { _, _ ->
-                                onPoiClick(poi)
-                                showInfoWindow()
-                                true
+                    pois.forEach { poi ->
+                        val lat = poi.latitude
+                        val lon = poi.longitude
+                        if (lat != 0.0 && lon != 0.0) {
+                            val marker = Marker(map).apply {
+                                position = GeoPoint(lat, lon)
+                                title = poi.name
+                                snippet = poi.address ?: poi.type ?: poi.getDisplayName("en")
+                                setOnMarkerClickListener { _, _ ->
+                                    onPoiClick(poi)
+                                    showInfoWindow()
+                                    true
+                                }
                             }
+                            map.overlays.add(marker)
                         }
-                        map.overlays.add(marker)
                     }
-                }
 
-                // If a POI is selected, center map on it
-                if (selectedPoi != null && selectedPoi.latitude != 0.0) {
-                    map.controller.animateTo(GeoPoint(selectedPoi.latitude, selectedPoi.longitude))
+                    if (selectedPoi != null && selectedPoi.latitude != 0.0) {
+                        map.controller.animateTo(GeoPoint(selectedPoi.latitude, selectedPoi.longitude))
+                    }
+                    map.invalidate()
+                }.onFailure {
+                    mapError = "تعذر عرض بيانات الخريطة"
                 }
-
-                map.invalidate()
             }
         )
+
+        if (mapError != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .background(MaterialTheme.colorScheme.errorContainer)
+                    .padding(12.dp)
+            ) {
+                Text(
+                    text = mapError!!,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+            }
+        }
 
         // Overlay Map badge
         Box(

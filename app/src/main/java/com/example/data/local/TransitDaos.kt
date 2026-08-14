@@ -17,6 +17,9 @@ interface PoiDao {
     @Query("SELECT COUNT(*) FROM pois")
     fun getPoiCountFlow(): Flow<Int>
 
+    @Query("SELECT COUNT(*) FROM pois")
+    suspend fun getPoiCount(): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPois(pois: List<PoiEntity>)
 
@@ -32,6 +35,9 @@ interface StreetDao {
     @Query("SELECT COUNT(*) FROM streets")
     fun getStreetCountFlow(): Flow<Int>
 
+    @Query("SELECT COUNT(*) FROM streets")
+    suspend fun getStreetCount(): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertStreets(streets: List<StreetEntity>)
 
@@ -46,6 +52,9 @@ interface StreetJunctionDao {
 
     @Query("SELECT COUNT(*) FROM street_junctions")
     fun getJunctionCountFlow(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM street_junctions")
+    suspend fun getJunctionCount(): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertJunctions(junctions: List<StreetJunctionEntity>)

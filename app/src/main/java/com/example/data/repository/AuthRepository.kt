@@ -46,24 +46,31 @@ class AuthRepository(
     }
 
     private fun setupAuthListener() {
-        auth.addAuthStateListener { firebaseAuth ->
-            val currentUser = firebaseAuth.currentUser
-            if (currentUser == null) {
-                userDocListener?.remove()
-                userDocListener = null
-                _authState.value = AuthState.Unauthenticated
-            } else {
-                listenToUserDocument(currentUser.uid, currentUser.email ?: "")
+        try {
+            auth.addAuthStateListener { firebaseAuth ->
+                val currentUser = firebaseAuth.currentUser
+                if (currentUser == null) {
+                    userDocListener?.remove()
+                    userDocListener = null
+                    _authState.value = AuthState.Unauthenticated
+                } else {
+                    listenToUserDocument(currentUser.uid, currentUser.email ?: "")
+                }
             }
+        } catch (error: Throwable) {
+            _authState.value = AuthState.Error("تعذر تهيئة خدمة المصادقة")
         }
     }
+
+    private suspend fun readCachedProfile(uid: String): CachedVipProfileEntity? =
+        runCatching { vipCacheDao.getCachedProfile(uid) }.getOrNull()
 
     private fun listenToUserDocument(uid: String, email: String) {
         userDocListener?.remove()
 
         // Read local SQLCipher cache first for instant UI response
         appScope.launch(Dispatchers.IO) {
-            val cached = vipCacheDao.getCachedProfile(uid)
+            val cached = readCachedProfile(uid)
             if (cached != null && _authState.value is AuthState.Loading) {
                 val profile = UserVipProfile(
                     uid = cached.uid,
@@ -81,13 +88,15 @@ class AuthRepository(
             }
         }
 
-        // Attach Real-time Firestore Listener
-        userDocListener = firestore.collection("users").document(uid)
+        // Attach the real-time listener, but keep provider failures inside the
+        // auth state machine instead of allowing them to terminate the process.
+        try {
+            userDocListener = firestore.collection("users").document(uid)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     // If network fails, rely on cached or emit error
                     appScope.launch(Dispatchers.IO) {
-                        val cached = vipCacheDao.getCachedProfile(uid)
+                        val cached = readCachedProfile(uid)
                         if (cached != null) {
                             val profile = UserVipProfile(
                                 uid = cached.uid,
@@ -114,17 +123,19 @@ class AuthRepository(
 
                     // Persist to encrypted local DB
                     appScope.launch(Dispatchers.IO) {
-                        vipCacheDao.saveCachedProfile(
-                            CachedVipProfileEntity(
-                                uid = profile.uid,
-                                email = profile.email,
-                                displayName = profile.displayName,
-                                isVip = profile.isVip,
-                                isAdmin = profile.isAdmin,
-                                statusMessage = profile.statusMessage,
-                                lastCheckedTimestamp = System.currentTimeMillis()
+                        runCatching {
+                            vipCacheDao.saveCachedProfile(
+                                CachedVipProfileEntity(
+                                    uid = profile.uid,
+                                    email = profile.email,
+                                    displayName = profile.displayName,
+                                    isVip = profile.isVip,
+                                    isAdmin = profile.isAdmin,
+                                    statusMessage = profile.statusMessage,
+                                    lastCheckedTimestamp = System.currentTimeMillis()
+                                )
                             )
-                        )
+                        }
                     }
 
                     // Real-time State Transition!
@@ -166,6 +177,9 @@ class AuthRepository(
                     }
                 }
             }
+        } catch (error: Throwable) {
+            _authState.value = AuthState.Error("تعذر الاتصال بخدمة المستخدمين")
+        }
     }
 
     private fun parseUserProfile(snapshot: DocumentSnapshot, uid: String, defaultEmail: String): UserVipProfile {

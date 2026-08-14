@@ -14,6 +14,7 @@ import com.example.data.parser.TransitGsonParser
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
@@ -25,21 +26,21 @@ class TransitRepository(
     private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
 ) {
 
-    val allPois: Flow<List<Poi>> = poiDao.getAllPoisFlow().map { entities ->
-        entities.map { it.toDomain() }
-    }
+    val allPois: Flow<List<Poi>> = poiDao.getAllPoisFlow()
+        .map { entities -> entities.map { it.toDomain() } }
+        .catch { emit(emptyList()) }
 
-    val allStreets: Flow<List<Street>> = streetDao.getAllStreetsFlow().map { entities ->
-        entities.map { it.toDomain() }
-    }
+    val allStreets: Flow<List<Street>> = streetDao.getAllStreetsFlow()
+        .map { entities -> entities.map { it.toDomain() } }
+        .catch { emit(emptyList()) }
 
-    val allJunctions: Flow<List<StreetJunction>> = junctionDao.getAllJunctionsFlow().map { entities ->
-        entities.map { it.toDomain() }
-    }
+    val allJunctions: Flow<List<StreetJunction>> = junctionDao.getAllJunctionsFlow()
+        .map { entities -> entities.map { it.toDomain() } }
+        .catch { emit(emptyList()) }
 
-    val poiCount: Flow<Int> = poiDao.getPoiCountFlow()
-    val streetCount: Flow<Int> = streetDao.getStreetCountFlow()
-    val junctionCount: Flow<Int> = junctionDao.getJunctionCountFlow()
+    val poiCount: Flow<Int> = poiDao.getPoiCountFlow().catch { emit(0) }
+    val streetCount: Flow<Int> = streetDao.getStreetCountFlow().catch { emit(0) }
+    val junctionCount: Flow<Int> = junctionDao.getJunctionCountFlow().catch { emit(0) }
 
     suspend fun importDataset(dataset: TransitDataset) = withContext(Dispatchers.IO) {
         val poiEntities = dataset.pois.map { poi ->
@@ -91,6 +92,13 @@ class TransitRepository(
     }
 
     suspend fun seedInitialDataIfEmpty() = withContext(Dispatchers.IO) {
+        // Do not rewrite the encrypted database on every launch. Besides being
+        // expensive, an unnecessary open/write cycle can abort application
+        // startup on devices where the SQLCipher provider is still warming up.
+        if (poiDao.getPoiCount() > 0 || streetDao.getStreetCount() > 0 || junctionDao.getJunctionCount() > 0) {
+            return@withContext
+        }
+
         val sampleJson = """
         {
           "_version": "3.1",

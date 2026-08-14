@@ -68,9 +68,22 @@ class TransitViewModel(
 
     init {
         viewModelScope.launch {
-            transitRepository.seedInitialDataIfEmpty()
-            // Check if newer cloud dataset exists
-            transitRepository.syncWithCloudFirestore()
+            try {
+                transitRepository.seedInitialDataIfEmpty()
+            } catch (error: Throwable) {
+                // Startup data is optional; a local database/provider failure
+                // must not crash the authentication screen.
+                _statusMessage.value = "تعذر تحميل البيانات المحلية"
+            }
+
+            // Cloud sync is also optional during startup. The repository
+            // returns a Result for expected network failures, while this guard
+            // protects against provider/runtime failures as well.
+            try {
+                transitRepository.syncWithCloudFirestore()
+            } catch (error: Throwable) {
+                _statusMessage.value = "تعذر مزامنة البيانات السحابية"
+            }
         }
     }
 
