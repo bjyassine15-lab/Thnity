@@ -355,24 +355,14 @@ class AuthRepository(
         }
     }
 
-    // Quick VIP Simulator for Local / Offline Sandbox testing
-    suspend fun simulateVipActivationLocally(approved: Boolean) = withContext(Dispatchers.IO) {
+    // Quick VIP Simulator for local UI testing only.
+    // It must never write a simulated privilege to the encrypted cache or Firestore.
+    suspend fun simulateVipActivationLocally(approved: Boolean) = withContext(Dispatchers.Main.immediate) {
         val current = _authState.value
         if (current is AuthState.PendingVipApproval) {
             val updated = current.profile.copy(
                 isVip = approved,
-                statusMessage = if (approved) "تم التفعيل عبر المحاكي السريع" else "في انتظار الموافقة"
-            )
-            vipCacheDao.saveCachedProfile(
-                CachedVipProfileEntity(
-                    uid = updated.uid,
-                    email = updated.email,
-                    displayName = updated.displayName,
-                    isVip = updated.isVip,
-                    isAdmin = updated.isAdmin,
-                    statusMessage = updated.statusMessage,
-                    lastCheckedTimestamp = System.currentTimeMillis()
-                )
+                statusMessage = if (approved) "تم التفعيل عبر المحاكي السريع (محلي فقط)" else "في انتظار الموافقة"
             )
             if (approved) {
                 _authState.value = AuthState.Authenticated(updated, isVip = true)
