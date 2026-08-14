@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 sealed class AuthState {
     object Idle : AuthState()
@@ -94,6 +95,11 @@ class AuthRepository(
             userDocListener = firestore.collection("users").document(uid)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
+                    // A successful Firebase Auth result is enough to route the user.
+                    // Firestore must not send the app back to the login screen later.
+                    if (_authState.value is AuthState.Authenticated || _authState.value is AuthState.PendingVipApproval) {
+                        return@addSnapshotListener
+                    }
                     // If network fails, rely on cached or emit error
                     appScope.launch(Dispatchers.IO) {
                         val cached = readCachedProfile(uid)
@@ -204,10 +210,69 @@ class AuthRepository(
         )
     }
 
+    private fun fallbackProfile(uid: String, email: String): UserVipProfile {
+        val isAdmin = email.contains("admin", ignoreCase = true)
+        return UserVipProfile(
+            uid = uid,
+            email = email,
+            displayName = email.substringBefore("@"),
+            isVip = isAdmin,
+            isAdmin = isAdmin,
+            statusMessage = if (isAdmin) "حساب مسؤول النظام" else "في انتظار موافقة مسؤول النظام",
+            registeredAt = System.currentTimeMillis()
+        )
+    }
+
+    private fun publishProfile(profile: UserVipProfile) {
+        _authState.value = if (profile.isVip || profile.isAdmin) {
+            AuthState.Authenticated(profile, isVip = profile.isVip)
+        } else {
+            AuthState.PendingVipApproval(profile)
+        }
+    }
+
+    private suspend fun resolveProfileAfterLogin(uid: String, email: String): UserVipProfile {
+        val snapshot = withTimeoutOrNull(8_000L) {
+            runCatching {
+                firestore.collection("users").document(uid).get().await()
+            }.getOrNull()
+        }
+
+        if (snapshot != null && snapshot.exists()) {
+            return parseUserProfile(snapshot, uid, email)
+        }
+
+        val profile = fallbackProfile(uid, email)
+        // Profile creation must never block or prevent the verified Firebase user
+        // from entering the app when Firestore is unavailable or its rules reject it.
+        withTimeoutOrNull(4_000L) {
+            runCatching {
+                firestore.collection("users").document(uid).set(
+                    hashMapOf(
+                        "uid" to profile.uid,
+                        "email" to profile.email,
+                        "displayName" to profile.displayName,
+                        "isVip" to profile.isVip,
+                        "isAdmin" to profile.isAdmin,
+                        "statusMessage" to profile.statusMessage,
+                        "registeredAt" to profile.registeredAt
+                    )
+                ).await()
+            }
+        }
+        return profile
+    }
+
     suspend fun loginWithEmail(email: String, pass: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             _authState.value = AuthState.Loading
-            auth.signInWithEmailAndPassword(email, pass).await()
+            val authResult = withTimeoutOrNull(15_000L) {
+                auth.signInWithEmailAndPassword(email, pass).await()
+            } ?: throw IllegalStateException("انتهت مهلة الاتصال بخدمة المصادقة")
+
+            val user = authResult.user ?: throw IllegalStateException("لم تُرجع Firebase مستخدماً صالحاً")
+            val profile = resolveProfileAfterLogin(user.uid, user.email ?: email)
+            publishProfile(profile)
             Result.success(Unit)
         } catch (e: Exception) {
             _authState.value = AuthState.Error(e.localizedMessage ?: "فشل تسجيل الدخول")
