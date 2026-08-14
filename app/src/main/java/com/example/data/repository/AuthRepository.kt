@@ -153,12 +153,14 @@ class AuthRepository(
                 } else {
                     // Document doesn't exist yet, initialize it
                     val defaultName = auth.currentUser?.displayName ?: email.substringBefore("@")
-                    val isAdmin = email.contains("admin", ignoreCase = true)
+                    // Missing profiles are never granted privileges from an email address.
+                    // Admin/VIP status must come from a trusted Firestore profile.
+                    val isAdmin = false
                     val initialProfile = UserVipProfile(
                         uid = uid,
                         email = email,
                         displayName = defaultName,
-                        isVip = isAdmin, // Admins get VIP automatically
+                        isVip = isAdmin, // Privileges remain disabled until provisioned in Firestore
                         isAdmin = isAdmin,
                         statusMessage = if (isAdmin) "حساب مسؤول النظام" else "في انتظار موافقة مسؤول النظام",
                         registeredAt = System.currentTimeMillis()
@@ -192,7 +194,8 @@ class AuthRepository(
         val email = snapshot.getString("email") ?: defaultEmail
         val displayName = snapshot.getString("displayName") ?: email.substringBefore("@")
         val isVip = snapshot.getBoolean("isVip") ?: false
-        val isAdmin = snapshot.getBoolean("isAdmin") ?: email.contains("admin", ignoreCase = true)
+        // Never infer administrator privileges from an email address.
+        val isAdmin = snapshot.getBoolean("isAdmin") ?: false
         val statusMessage = snapshot.getString("statusMessage")
             ?: if (isVip) "حساب VIP مفعّل" else "في انتظار موافقة مسؤول النظام"
         val registeredAt = snapshot.getLong("registeredAt") ?: System.currentTimeMillis()
@@ -211,7 +214,9 @@ class AuthRepository(
     }
 
     private fun fallbackProfile(uid: String, email: String): UserVipProfile {
-        val isAdmin = email.contains("admin", ignoreCase = true)
+        // Fallback profiles are deliberately non-privileged.
+        // Admin/VIP status must come from a trusted Firestore profile.
+        val isAdmin = false
         return UserVipProfile(
             uid = uid,
             email = email,
@@ -286,7 +291,9 @@ class AuthRepository(
             val authResult = auth.createUserWithEmailAndPassword(email, pass).await()
             val user = authResult.user ?: throw IllegalStateException("User creation failed")
 
-            val isAdmin = email.contains("admin", ignoreCase = true)
+            // New registrations are always non-privileged. An existing admin
+            // profile must be provisioned by a trusted Firestore/admin workflow.
+            val isAdmin = false
             val profile = hashMapOf(
                 "uid" to user.uid,
                 "email" to email,
